@@ -39,6 +39,38 @@ on:
         description: Require sha256 image digests instead of mutable tags
         type: boolean
         default: true
+      build_image:
+        description: Build and push one image in GitHub, then pin every component to its digest
+        type: boolean
+        default: false
+      image_registry_type:
+        description: GHCR or DOCR when build_image is true
+        type: string
+        default: GHCR
+      image_registry:
+        description: GHCR organization or DigitalOcean registry name
+        type: string
+        default: ''
+      image_repository:
+        description: Image repository name within the registry
+        type: string
+        default: ''
+      dockerfile_path:
+        description: Dockerfile path relative to the caller repository
+        type: string
+        default: Dockerfile
+      build_context:
+        description: Docker build context relative to the caller repository
+        type: string
+        default: .
+      build_target:
+        description: Optional Dockerfile stage to build
+        type: string
+        default: ''
+      build_args:
+        description: Optional newline-delimited Docker build arguments; never put secrets here
+        type: string
+        default: ''
       healthcheck_url:
         description: Optional HTTPS URL polled after deployment
         type: string
@@ -108,6 +140,12 @@ jobs:
           DEPLOY_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
           REQUIRE_IMAGE_DIGESTS: ${{ inputs.require_image_digests }}
+          BUILD_IMAGE: ${{ inputs.build_image }}
+          IMAGE_REGISTRY_TYPE: ${{ inputs.image_registry_type }}
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+          BUILD_CONTEXT: ${{ inputs.build_context }}
           HEALTHCHECK_URL: ${{ inputs.healthcheck_url }}
           HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
           HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
@@ -117,6 +155,9 @@ jobs:
   deploy:
     needs: validate
     runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      packages: write
     timeout-minutes: ${{ inputs.timeout_minutes }}
     environment: ${{ inputs.environment }}
     concurrency:
@@ -151,6 +192,12 @@ jobs:
           DEPLOY_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
           REQUIRE_IMAGE_DIGESTS: ${{ inputs.require_image_digests }}
+          BUILD_IMAGE: ${{ inputs.build_image }}
+          IMAGE_REGISTRY_TYPE: ${{ inputs.image_registry_type }}
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+          BUILD_CONTEXT: ${{ inputs.build_context }}
           HEALTHCHECK_URL: ${{ inputs.healthcheck_url }}
           HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
           HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
@@ -186,6 +233,71 @@ jobs:
         with:
           token: ${{ secrets.digitalocean_token }}
           version: ${{ inputs.doctl_version }}
+      - name: Log in to GitHub Container Registry
+        if: inputs.build_image && inputs.image_registry_type == 'GHCR'
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Log in to DigitalOcean Container Registry
+        if: inputs.build_image && inputs.image_registry_type == 'DOCR'
+        run: doctl registry login --expiry-seconds 3600
+      - name: Set image tag
+        if: inputs.build_image
+        id: image
+        env:
+          IMAGE_REGISTRY_TYPE: ${{ inputs.image_registry_type }}
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$IMAGE_REGISTRY_TYPE" == GHCR ]]; then
+            host=ghcr.io
+          else
+            host=registry.digitalocean.com
+          fi
+          echo "tag=$host/$IMAGE_REGISTRY/$IMAGE_REPOSITORY:app-platform-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        if: inputs.build_image
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Build and push Linux AMD64 image
+        if: inputs.build_image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: app/${{ inputs.build_context }}
+          file: app/${{ inputs.dockerfile_path }}
+          target: ${{ inputs.build_target }}
+          build-args: ${{ inputs.build_args }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.image.outputs.tag }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ inputs.image_repository }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image_repository }}
+      - name: Verify public GitHub image can be pulled anonymously
+        if: inputs.build_image && inputs.image_registry_type == 'GHCR'
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io
+          docker buildx imagetools inspect "${IMAGE_TAG%:*}@$IMAGE_DIGEST"
+      - name: Pin the built image digest in the app spec
+        if: inputs.build_image
+        working-directory: app
+        env:
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          IMAGE_REGISTRY_TYPE: ${{ inputs.image_registry_type }}
+          IMAGE_REGISTRY: ${{ inputs.image_registry }}
+          IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: ruby ../shared/scripts/app_platform.rb render-image .
       - name: Validate with DigitalOcean and inspect current app
         working-directory: app
         env:

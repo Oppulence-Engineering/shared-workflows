@@ -9,7 +9,7 @@ Copy [the caller example](examples/caller.yml) into each application's `.github/
 The workflow has two jobs:
 
 1. **Validate** the caller ref, configuration, and full app spec without a DigitalOcean token.
-2. **Deploy** after the GitHub environment gate. Revalidate, check the authorized branch head, inspect the target app, run DigitalOcean's spec validation, update the existing app, wait for completion, verify the active deployment, and optionally poll an HTTPS health endpoint.
+2. **Deploy** after the GitHub environment gate. Revalidate, check the authorized branch head, optionally build and publish a Linux AMD64 image in GitHub Actions, inspect the target app, run DigitalOcean's spec validation, update the existing app, wait for completion, verify the active deployment, and optionally poll an HTTPS health endpoint.
 
 The deployment job serializes updates to the same app ID within a caller repository. Assign each app ID to exactly one caller repository: GitHub concurrency does not coordinate across repositories, and simultaneous cross-repository updates can race. Failed deployments link to the app's DigitalOcean console. It does not automatically roll back: App Platform rollbacks do not reverse database changes.
 
@@ -26,6 +26,14 @@ The deployment job serializes updates to the same app ID within a caller reposit
 | `timeout_minutes` | `60` | Deploy job timeout, 5–360 minutes. |
 | `source_revision_policy` | `exact` | `exact`: require GitHub source from caller repo/branch and verify every deployed source commit equals `github.sha`. `branch`: require caller repo/branch but skip commit verification. `off`: allow other source providers and branches. |
 | `require_image_digests` | `true` | Require image components to use an immutable `sha256:` digest and verify that the active deployment uses it. Set `false` to permit tags. |
+| `build_image` | `false` | Build one image in GitHub Actions and pin every service, worker, and job to its immutable digest. Requires `require_image_digests: true`. |
+| `image_registry_type` | `GHCR` | `GHCR` or `DOCR` for the built image. |
+| `image_registry` | Empty | GHCR organization (must match caller owner) or DigitalOcean registry name. |
+| `image_repository` | Empty | Image package name. Every component in the spec must reference this same package. |
+| `dockerfile_path` | `Dockerfile` | Dockerfile inside the caller repository. |
+| `build_context` | `.` | Build context inside the caller repository. |
+| `build_target` | Empty | Optional Dockerfile stage. |
+| `build_args` | Empty | Optional newline-delimited nonsecret Docker build arguments. |
 | `healthcheck_url` | Empty | Optional HTTPS endpoint; success is any 2xx status. Redirects are not followed. |
 | `healthcheck_attempts` | `12` | 1–100 attempts. |
 | `healthcheck_interval_seconds` | `5` | 0–300 seconds between attempts. |
@@ -37,7 +45,21 @@ Outputs: `deployment_id` and `app_url` are available from the caller's deploy jo
 
 ### Source policies
 
-`exact` is the recommended setting for GitHub source components. It requires every GitHub component to use the calling repository and branch, with `deploy_on_push: false`. The workflow checks that the remote branch still points to the caller's `github.sha` before updating, then compares App Platform's recorded commit hash after deployment. If the branch advances between those checks, the workflow fails, but App Platform might already have deployed that newer commit. For truly atomic promotion, build an image once, reference its digest in the spec, and keep `require_image_digests: true`.
+`exact` is the recommended setting. With GitHub source components, it requires every component to use the calling repository and branch, with `deploy_on_push: false`. The workflow checks that the remote branch still points to the caller's `github.sha` before updating, then compares App Platform's recorded commit hash after deployment. With `build_image: true`, the workflow builds the checked-out commit once, pushes it with an `app-platform-<commit>` tag, and replaces the committed spec's `ci-placeholder` tag with the returned digest before DigitalOcean sees the spec. The deployed digest is verified for every component. If the branch advances before the build, the workflow fails rather than deploying an old run.
+
+### Build on GitHub and deploy the image
+
+In the caller, grant `contents: read` and `packages: write` permissions and pass `build_image: true`, the image registry/name, Dockerfile, and context. Keep the complete app spec in the caller repository. For each service, worker, and job that shares the image, use:
+
+```yaml
+image:
+  registry_type: GHCR
+  registry: your-organization
+  repository: your-image
+  tag: ci-placeholder
+```
+
+Every deployable component must use that same image package. The placeholder is never submitted to DigitalOcean; the workflow replaces it with the digest emitted by Docker Buildx. For GHCR, the package must allow anonymous pulls because this workflow does not place registry credentials in the app spec. The workflow logs out and checks anonymous pull before updating the app. Link the image to the public source repository to inherit package access, or mark the package public in GitHub package settings. GitHub says a public package cannot later be made private. For DOCR, create the registry beforehand and let the DigitalOcean token authenticate the push. App Platform only runs Linux AMD64 images, so the build platform is fixed to `linux/amd64`.
 
 `branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub, GitLab, and Bitbucket sources require `deploy_on_push: false`; image sources must not enable `deploy_on_push`. This keeps deployments controlled by the workflow.
 
