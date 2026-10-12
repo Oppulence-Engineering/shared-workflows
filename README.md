@@ -41,7 +41,7 @@ Outputs: `deployment_id` and `app_url` are available from the caller's deploy jo
 
 `branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub, GitLab, and Bitbucket sources require `deploy_on_push: false`; image sources must not enable `deploy_on_push`. This keeps deployments controlled by the workflow.
 
-The workflow rejects plaintext `SECRET` environment values and plaintext image registry credentials in the committed spec. Use DigitalOcean encrypted `EV[...]` values or variable references. Keep all runtime secret values and credentials out of this public repository.
+The workflow rejects plaintext `SECRET` environment values and plaintext image registry credentials in the committed spec. Use DigitalOcean encrypted `EV[...]` values or variable references. Its DigitalOcean validation proposes the spec against the existing app ID so encrypted secret values are accepted. Keep all runtime secret values and credentials out of this public repository.
 
 ### Provision each app once
 

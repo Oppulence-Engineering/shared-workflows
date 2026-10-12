@@ -194,7 +194,9 @@ jobs:
           BEFORE_JSON: ${{ runner.temp }}/do-app-before.json
         run: |
           set -euo pipefail
-          doctl apps spec validate "$APP_SPEC_PATH"
+          # This workflow updates an existing app. The generic spec validator
+          # treats encrypted EV[...] secrets as invalid for a *new* app.
+          doctl apps propose --app "$APP_ID" --spec "$APP_SPEC_PATH"
           doctl apps get "$APP_ID" -o json > "$BEFORE_JSON"
           ruby ../shared/scripts/app_platform.rb preflight . "$BEFORE_JSON"
       - name: Update app and wait for deployment
