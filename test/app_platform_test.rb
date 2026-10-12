@@ -107,6 +107,9 @@ class AppPlatformTest < Minitest::Test
     @spec['services'][0]['envs'][0]['value'] = 'plaintext'
     write_spec
     assert_raises(AppPlatform::Error) { validate }
+    @spec['services'][0]['envs'][0]['type'] = 'secret'
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
   end
 
   def test_accepts_component_bindable_secret_and_valid_git_ref
@@ -145,11 +148,26 @@ class AppPlatformTest < Minitest::Test
 
   def test_off_policy_allows_external_source
     @spec['services'][0].delete('github')
-    @spec['services'][0]['gitlab'] = { 'repo' => 'other/demo', 'branch' => 'main' }
+    @spec['services'][0]['gitlab'] = { 'repo' => 'other/demo', 'branch' => 'main',
+                                       'deploy_on_push' => false }
     write_spec
     assert_raises(AppPlatform::Error) { validate }
     ENV['SOURCE_REVISION_POLICY'] = 'off'
     validate
+    @spec['services'][0]['gitlab']['deploy_on_push'] = true
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
+  end
+
+  def test_rejects_image_auto_deploy
+    @spec['services'][0].delete('github')
+    @spec['services'][0]['image'] = {
+      'repository' => 'demo',
+      'digest' => "sha256:#{'a' * 64}",
+      'deploy_on_push' => { 'enabled' => true }
+    }
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
   end
 
   def test_rejects_spec_escape_and_invalid_options
