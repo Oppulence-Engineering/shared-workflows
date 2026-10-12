@@ -54,7 +54,7 @@ The workflow rejects plaintext `SECRET` environment values and plaintext image r
 
 ### Release and security policy
 
-Pin callers to a reviewed **40-character commit SHA**. A moving branch or tag can change code that receives the deployment token. Every update to this repository must pass `actionlint` and the validation tests before merge. Update each caller pin after review. The pinned DigitalOcean, checkout, Ruby, and Go setup actions are also referenced by commit SHA.
+Pin callers to a reviewed **40-character commit SHA**. A moving branch or tag can change code that receives the deployment token. Version tags are protected against updates and deletion. Every update to this repository must pass `actionlint` and the validation tests before merge. Dependabot opens weekly pull requests for pinned GitHub Actions; review them and update each caller pin only after a new release. The pinned DigitalOcean, checkout, Ruby, and Go setup actions are also referenced by commit SHA.
 
 The reusable workflow checks out its own scripts at the exact workflow revision using GitHub's `job.workflow_repository` and `job.workflow_sha` contexts. `actionlint` 1.7.12 predates these two documented contexts, so CI suppresses only those two false positives.
 
