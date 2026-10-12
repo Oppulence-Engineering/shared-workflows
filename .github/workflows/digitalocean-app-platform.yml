@@ -1,0 +1,80 @@
+name: Reusable DigitalOcean App Platform deployment
+
+# This workflow has no event trigger of its own; each app repository supplies a caller.
+on:
+  workflow_call:
+    inputs:
+      app_spec_path:
+        description: App Platform spec in the calling repository
+        required: true
+        type: string
+      app_id:
+        description: ID of the existing DigitalOcean App Platform app
+        required: true
+        type: string
+      environment:
+        description: GitHub environment used for deployment protection rules
+        required: true
+        type: string
+      deploy_ref:
+        description: Full Git ref authorized to deploy, such as refs/heads/main
+        required: true
+        type: string
+    secrets:
+      digitalocean_token:
+        description: DigitalOcean token with App Platform read and write access
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deploy ref
+        env:
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+        run: |
+          if [[ "$GITHUB_REF" != "$DEPLOY_REF" ]]; then
+            echo "::error::Expected $DEPLOY_REF, got $GITHUB_REF"
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+      - name: Check app spec
+        env:
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          APP_ID: ${{ inputs.app_id }}
+        run: |
+          if [[ ! -f "$APP_SPEC_PATH" ]]; then
+            echo "::error::App spec does not exist: $APP_SPEC_PATH"
+            exit 1
+          fi
+          if [[ -z "$APP_ID" ]]; then
+            echo "::error::An existing App Platform app ID is required"
+            exit 1
+          fi
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: do-app-${{ github.repository }}-${{ inputs.app_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2.5.2
+        with:
+          token: ${{ secrets.digitalocean_token }}
+          version: 1.180.0
+      - name: Validate and deploy app
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+        run: |
+          set -euo pipefail
+          doctl apps spec validate "$APP_SPEC_PATH"
+          doctl apps update "$APP_ID" --spec "$APP_SPEC_PATH" --update-sources --wait

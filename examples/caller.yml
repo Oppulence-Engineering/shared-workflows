@@ -1,0 +1,27 @@
+# Copy to the application repository's .github/workflows/ directory.
+# Add application quality gates and make this job depend on them before production use.
+name: Deploy to DigitalOcean App Platform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - ".do/app.yaml"
+      - ".github/workflows/deploy-app-platform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: Oppulence-Engineering/shared-workflows/.github/workflows/digitalocean-app-platform.yml@v1.0.0
+    with:
+      app_id: ${{ vars.DO_APP_ID }}
+      app_spec_path: .do/app.yaml
+      deploy_ref: refs/heads/main
+      environment: production
+    secrets:
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_APP_PLATFORM_TOKEN }}

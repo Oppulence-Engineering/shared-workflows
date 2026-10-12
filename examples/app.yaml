@@ -1,0 +1,14 @@
+# Copy to the application repository as .do/app.yaml and replace the placeholders.
+# Add the app's actual routes, health checks, runtime configuration, and sizing.
+name: example-web-production
+region: nyc
+services:
+  - name: web
+    github:
+      repo: YOUR_ORG/YOUR_APP_REPO
+      branch: main
+      deploy_on_push: false
+    source_dir: /
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    instance_size_slug: basic-xxs
