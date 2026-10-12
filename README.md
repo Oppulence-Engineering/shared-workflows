@@ -4,7 +4,7 @@ Public, reusable GitHub Actions workflows for DigitalOcean App Platform. Public 
 
 ## Deploy an existing App Platform app
 
-Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. The current `v1.1.1` release is `494800aadf48fe32f947159ec865d3f0c2886193`. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
+Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
 
 The workflow has two jobs:
 
@@ -60,6 +60,31 @@ image:
 ```
 
 Every deployable component must use that same image package. The placeholder is never submitted to DigitalOcean; the workflow replaces it with the digest emitted by Docker Buildx. For GHCR, the package must allow anonymous pulls because this workflow does not place registry credentials in the app spec. The workflow logs out and checks anonymous pull before updating the app. Link the image to the public source repository to inherit package access, or mark the package public in GitHub package settings. GitHub says a public package cannot later be made private. For DOCR, create the registry beforehand and let the DigitalOcean token authenticate the push. App Platform only runs Linux AMD64 images, so the build platform is fixed to `linux/amd64`.
+
+The caller's deploy job needs these additional inputs:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    uses: your-organization/shared-workflows/.github/workflows/digitalocean-app-platform.yml@<reviewed-40-character-sha>
+    with:
+      app_id: ${{ vars.DO_APP_ID }}
+      app_spec_path: .do/production.yaml
+      deploy_ref: refs/heads/main
+      environment: production
+      build_image: true
+      image_registry_type: GHCR
+      image_registry: your-organization
+      image_repository: your-image
+      dockerfile_path: apps/your-app/Dockerfile
+      build_context: .
+    secrets:
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_APP_PLATFORM_TOKEN }}
+```
 
 `branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub, GitLab, and Bitbucket sources require `deploy_on_push: false`; image sources must not enable `deploy_on_push`. This keeps deployments controlled by the workflow.
 
