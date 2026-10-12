@@ -130,6 +130,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           path: app
+          persist-credentials: false
       - name: Check out this workflow's exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -160,9 +161,21 @@ jobs:
         working-directory: app
         env:
           DEPLOY_REF: ${{ inputs.deploy_ref }}
+          GH_READ_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           if [[ "$DEPLOY_REF" == refs/heads/* ]]; then
-            remote_sha="$(git ls-remote --exit-code origin "$DEPLOY_REF" | cut -f1)"
+            askpass="$(mktemp)"
+            trap 'rm -f "$askpass"' EXIT
+            cat > "$askpass" <<'ASKPASS'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$GH_READ_TOKEN" ;;
+          esac
+          ASKPASS
+            chmod 700 "$askpass"
+            remote_sha="$(GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin "$DEPLOY_REF" | cut -f1)"
             if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
               echo "::error::Branch moved since this run started; deploy its current head"
               exit 1

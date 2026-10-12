@@ -226,6 +226,7 @@ module AppPlatform
 
     if option('REQUIRE_IMAGE_DIGESTS') == 'true'
       deployed_spec = deployment['spec'] || after['spec']
+      assert(deployed_spec.is_a?(Hash), 'DigitalOcean returned no active app spec')
       entries.each do |kind, component|
         next unless component.key?('image')
 
