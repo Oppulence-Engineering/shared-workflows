@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: Oppulence-Engineering/shared-workflows/.github/workflows/digitalocean-app-platform.yml@57990ac2693c8ce8554553947e35436a2ce96e4d
+    uses: Oppulence-Engineering/shared-workflows/.github/workflows/digitalocean-app-platform.yml@f7215a700a8ea15c7c1a378fa240ccdba1ac2098
     with:
       app_id: ${{ vars.DO_APP_ID }}
       app_spec_path: .do/app.yaml
