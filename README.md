@@ -14,7 +14,7 @@ Reusable GitHub Actions workflows for deploying Oppulence applications to Digita
 | `environment` | Yes | GitHub environment for approval and branch protection |
 | `digitalocean_token` | Yes | Caller secret with App Platform read and write access |
 
-See [`examples/caller.yml`](examples/caller.yml) and [`examples/app.yaml`](examples/app.yaml) for a starting point. Copy the caller into the **application** repository's `.github/workflows/` directory, and place its app spec there. Replace the example app ID variable, repository, spec path, and token secret. Add that app's required test, migration, and smoke jobs before enabling its production deployment. Its `github.branch` in the spec must match the branch in `deploy_ref`, and `deploy_on_push` must be `false` to avoid a second deployment outside CI.
+See [`examples/caller.yml`](examples/caller.yml) and [`examples/app.yaml`](examples/app.yaml) for a starting point. The example caller is pinned to the first reviewed workflow commit, `57990ac2693c8ce8554553947e35436a2ce96e4d`. Copy the caller into the **application** repository's `.github/workflows/` directory, and place its app spec there. Replace the example app ID variable, repository, spec path, and token secret. Add that app's required test, migration, and smoke jobs before enabling its production deployment. Its `github.branch` in the spec must match the branch in `deploy_ref`, and `deploy_on_push` must be `false` to avoid a second deployment outside CI.
 
 ### Provision each app once
 
