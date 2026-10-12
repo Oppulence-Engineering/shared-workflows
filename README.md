@@ -4,7 +4,7 @@ Public, reusable GitHub Actions workflows for DigitalOcean App Platform. Public 
 
 ## Deploy an existing App Platform app
 
-Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. The current `v1.1.0` release is `f7215a700a8ea15c7c1a378fa240ccdba1ac2098`. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
+Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. The current `v1.1.1` release is `494800aadf48fe32f947159ec865d3f0c2886193`. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
 
 The workflow has two jobs:
 
@@ -39,7 +39,7 @@ Outputs: `deployment_id` and `app_url` are available from the caller's deploy jo
 
 `exact` is the recommended setting for GitHub source components. It requires every GitHub component to use the calling repository and branch, with `deploy_on_push: false`. The workflow checks that the remote branch still points to the caller's `github.sha` before updating, then compares App Platform's recorded commit hash after deployment. If the branch advances between those checks, the workflow fails, but App Platform might already have deployed that newer commit. For truly atomic promotion, build an image once, reference its digest in the spec, and keep `require_image_digests: true`.
 
-`branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub sources still require `deploy_on_push: false` to keep deployments controlled by the workflow.
+`branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub, GitLab, and Bitbucket sources require `deploy_on_push: false`; image sources must not enable `deploy_on_push`. This keeps deployments controlled by the workflow.
 
 The workflow rejects plaintext `SECRET` environment values and plaintext image registry credentials in the committed spec. Use DigitalOcean encrypted `EV[...]` values or variable references. Keep all runtime secret values and credentials out of this public repository.
 
