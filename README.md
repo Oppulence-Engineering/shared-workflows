@@ -11,7 +11,7 @@ The workflow has two jobs:
 1. **Validate** the caller ref, configuration, and full app spec without a DigitalOcean token.
 2. **Deploy** after the GitHub environment gate. Revalidate, check the authorized branch head, inspect the target app, run DigitalOcean's spec validation, update the existing app, wait for completion, verify the active deployment, and optionally poll an HTTPS health endpoint.
 
-The deployment job serializes updates to the same app ID within a caller repository. Failed deployments link to the app's DigitalOcean console. It does not automatically roll back: App Platform rollbacks do not reverse database changes.
+The deployment job serializes updates to the same app ID within a caller repository. Assign each app ID to exactly one caller repository: GitHub concurrency does not coordinate across repositories, and simultaneous cross-repository updates can race. Failed deployments link to the app's DigitalOcean console. It does not automatically roll back: App Platform rollbacks do not reverse database changes.
 
 ### Inputs
 

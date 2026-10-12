@@ -120,7 +120,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     environment: ${{ inputs.environment }}
     concurrency:
-      group: do-app-${{ inputs.app_id }}
+      group: do-app-${{ github.repository }}-${{ inputs.app_id }}
       cancel-in-progress: false
     outputs:
       deployment_id: ${{ steps.verify.outputs.deployment_id }}

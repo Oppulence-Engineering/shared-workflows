@@ -109,6 +109,14 @@ class AppPlatformTest < Minitest::Test
     assert_raises(AppPlatform::Error) { validate }
   end
 
+  def test_accepts_component_bindable_secret_and_valid_git_ref
+    @spec['services'][0]['envs'][0]['value'] = '${postgres-db.PASSWORD}'
+    @spec['services'][0]['github']['branch'] = 'release+signed'
+    ENV['DEPLOY_REF'] = 'refs/heads/release+signed'
+    write_spec
+    validate
+  end
+
   def test_rejects_mutable_image_without_opt_out
     @spec['services'][0].delete('github')
     @spec['services'][0]['image'] = { 'repository' => 'demo', 'tag' => 'latest' }
@@ -151,6 +159,9 @@ class AppPlatformTest < Minitest::Test
     ENV['APP_SPEC_PATH'] = 'app.yaml'
     ENV['DEPLOY_TIMEOUT_MINUTES'] = '999'
     assert_raises(AppPlatform::Error) { AppPlatform.validate_options }
+    ENV['DEPLOY_TIMEOUT_MINUTES'] = '60'
+    ENV['DEPLOY_REF'] = 'refs/heads/release..bad'
+    assert_raises(AppPlatform::Error) { AppPlatform.validate_options }
   end
 
   def test_rejects_wrong_app_and_busy_app
@@ -170,6 +181,11 @@ class AppPlatformTest < Minitest::Test
     end
     assert_raises(AppPlatform::Error) do
       AppPlatform.verify(@dir, before, write_app('wrong-sha.json', app('new', sha: 'b' * 40)))
+    end
+    malformed = app('new')
+    malformed['active_deployment']['services'] = { 'name' => 'web' }
+    assert_raises(AppPlatform::Error) do
+      AppPlatform.verify(@dir, before, write_app('malformed.json', malformed))
     end
   end
 

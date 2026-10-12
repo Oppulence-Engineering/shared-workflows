@@ -14,7 +14,7 @@ module AppPlatform
   UUID = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
   DIGEST = /\Asha256:[0-9a-f]{64}\z/i
   ENCRYPTED = /\AEV\[[^\]\r\n]+\]\z/
-  REFERENCE = /\A\$\{[A-Za-z_][A-Za-z0-9_]*\}\z/
+  REFERENCE = /\A\$\{(?:[A-Za-z_][A-Za-z0-9_]*|[A-Za-z0-9_-]+\.[A-Za-z_][A-Za-z0-9_]*)\}\z/
 
   module_function
 
@@ -71,7 +71,8 @@ module AppPlatform
   def validate_options
     assert(option('APP_ID').match?(UUID), 'APP_ID must be an existing app UUID')
     ref = option('DEPLOY_REF')
-    assert(ref.match?(/\Arefs\/(heads|tags)\/[A-Za-z0-9._\/-]+\z/) && !ref.include?('..'),
+    assert((ref.start_with?('refs/heads/') || ref.start_with?('refs/tags/')) &&
+           system('git', 'check-ref-format', ref, out: File::NULL, err: File::NULL),
            'DEPLOY_REF must be a full branch or tag ref')
     assert(option('DOCTL_VERSION').match?(/\A\d+\.\d+\.\d+\z/),
            'DOCTL_VERSION must be a pinned semantic version')
@@ -187,6 +188,12 @@ module AppPlatform
            "Another deployment is in progress (#{phase || 'unknown phase'})")
   end
 
+  def deployed_component(container, kind, name)
+    list = container[kind] || []
+    assert(list.is_a?(Array), "DigitalOcean returned malformed #{kind} deployment data")
+    list.find { |item| item.is_a?(Hash) && item['name'] == name }
+  end
+
   def preflight(root, before_path)
     data = spec(root)
     app = read_app(before_path)
@@ -217,7 +224,7 @@ module AppPlatform
       entries.each do |kind, component|
         next unless component.key?('github')
 
-        deployed = (deployment[kind] || []).find { |item| item['name'] == component['name'] }
+        deployed = deployed_component(deployment, kind, component['name'])
         actual = deployed && deployed['source_commit_hash']
         assert(actual.to_s.casecmp?(expected_sha),
                "#{component['name']} deployed #{actual || 'no recorded commit'}, expected #{expected_sha}")
@@ -230,7 +237,7 @@ module AppPlatform
       entries.each do |kind, component|
         next unless component.key?('image')
 
-        deployed = (deployed_spec[kind] || []).find { |item| item['name'] == component['name'] }
+        deployed = deployed_component(deployed_spec, kind, component['name'])
         actual = deployed && deployed.dig('image', 'digest')
         assert(actual == component.dig('image', 'digest'),
                "#{component['name']} active image digest differs from the spec")
