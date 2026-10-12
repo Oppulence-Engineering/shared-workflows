@@ -11,4 +11,4 @@ services:
     source_dir: /
     dockerfile_path: Dockerfile
     http_port: 8080
-    instance_size_slug: basic-xxs
+    instance_size_slug: apps-s-1vcpu-0.5gb
