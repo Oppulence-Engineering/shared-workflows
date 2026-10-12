@@ -4,7 +4,7 @@ Public, reusable GitHub Actions workflows for DigitalOcean App Platform. Public 
 
 ## Deploy an existing App Platform app
 
-Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. The current `v1.1.0` release is `f7215a700a8ea15c7c1a378fa240ccdba1ac2098`. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
+Copy [the caller example](examples/caller.yml) into each application's `.github/workflows/` directory and pin `uses:` to a reviewed commit SHA of this repository. The current `v1.1.1` release is `494800aadf48fe32f947159ec865d3f0c2886193`. Copy [the example spec](examples/app.yaml) into the application repository, then replace its placeholders with that app's complete spec.
 
 The workflow has two jobs:
 
