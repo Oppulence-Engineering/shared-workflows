@@ -12,9 +12,16 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25"
       - name: Lint reusable workflow and example caller
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml examples/caller.yml
+        # actionlint v1.7.12 predates GitHub's documented job.workflow_* contexts.
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -ignore 'property "workflow_(repository|sha)" is not defined' .github/workflows/*.yml examples/caller.yml
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+      - name: Test deployment validation and verification
+        run: ruby test/app_platform_test.rb

@@ -23,5 +23,15 @@ jobs:
       app_spec_path: .do/app.yaml
       deploy_ref: refs/heads/main
       environment: production
+      # Optional settings (defaults are shown):
+      # runner: ubuntu-latest
+      # doctl_version: 1.180.0
+      # timeout_minutes: 60
+      # source_revision_policy: exact
+      # require_image_digests: true
+      # healthcheck_url: https://example.com/health
+      # healthcheck_attempts: 12
+      # healthcheck_interval_seconds: 5
+      # healthcheck_timeout_seconds: 10
     secrets:
       digitalocean_token: ${{ secrets.DIGITALOCEAN_APP_PLATFORM_TOKEN }}
