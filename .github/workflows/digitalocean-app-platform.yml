@@ -1,80 +1,234 @@
 name: Reusable DigitalOcean App Platform deployment
 
-# This workflow has no event trigger of its own; each app repository supplies a caller.
 on:
   workflow_call:
     inputs:
-      app_spec_path:
-        description: App Platform spec in the calling repository
-        required: true
-        type: string
       app_id:
-        description: ID of the existing DigitalOcean App Platform app
+        description: Existing App Platform app UUID
         required: true
         type: string
-      environment:
-        description: GitHub environment used for deployment protection rules
+      app_spec_path:
+        description: Complete app spec path relative to the caller
         required: true
         type: string
       deploy_ref:
-        description: Full Git ref authorized to deploy, such as refs/heads/main
+        description: Authorized full Git branch or tag ref
         required: true
         type: string
+      environment:
+        description: Caller GitHub environment for deployment rules
+        required: true
+        type: string
+      runner:
+        description: Runner label for both jobs
+        type: string
+        default: ubuntu-latest
+      doctl_version:
+        description: Pinned doctl version
+        type: string
+        default: 1.180.0
+      timeout_minutes:
+        description: Deploy timeout from 5 to 360 minutes
+        type: number
+        default: 60
+      source_revision_policy:
+        description: exact verifies deployed SHA; branch verifies repo and branch; off permits other sources
+        type: string
+        default: exact
+      require_image_digests:
+        description: Require sha256 image digests instead of mutable tags
+        type: boolean
+        default: true
+      healthcheck_url:
+        description: Optional HTTPS URL polled after deployment
+        type: string
+        default: ''
+      healthcheck_attempts:
+        description: Maximum health check attempts from 1 to 100
+        type: number
+        default: 12
+      healthcheck_interval_seconds:
+        description: Delay between attempts from 0 to 300 seconds
+        type: number
+        default: 5
+      healthcheck_timeout_seconds:
+        description: Per-request timeout from 1 to 120 seconds
+        type: number
+        default: 10
     secrets:
       digitalocean_token:
-        description: DigitalOcean token with App Platform read and write access
+        description: DigitalOcean token with App Platform read/write access
         required: true
+    outputs:
+      deployment_id:
+        description: Verified active deployment ID
+        value: ${{ jobs.deploy.outputs.deployment_id }}
+      app_url:
+        description: App Platform live URL if available
+        value: ${{ jobs.deploy.outputs.app_url }}
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
     steps:
-      - name: Check deploy ref
+      - name: Check authorized ref
         env:
           DEPLOY_REF: ${{ inputs.deploy_ref }}
         run: |
-          if [[ "$GITHUB_REF" != "$DEPLOY_REF" ]]; then
-            echo "::error::Expected $DEPLOY_REF, got $GITHUB_REF"
+          if [[ "$GITHUB_REF" != "$DEPLOY_REF" || "$DEPLOY_REF" != refs/heads/* && "$DEPLOY_REF" != refs/tags/* ]]; then
+            echo "::error::Expected an authorized branch or tag ref; got $GITHUB_REF"
             exit 1
           fi
-      - uses: actions/checkout@v6
-      - name: Check app spec
+      - name: Check out caller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: app
+          persist-credentials: false
+      - name: Check out this workflow's exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: shared
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+      - name: Validate configuration and app spec
         env:
-          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
           APP_ID: ${{ inputs.app_id }}
-        run: |
-          if [[ ! -f "$APP_SPEC_PATH" ]]; then
-            echo "::error::App spec does not exist: $APP_SPEC_PATH"
-            exit 1
-          fi
-          if [[ -z "$APP_ID" ]]; then
-            echo "::error::An existing App Platform app ID is required"
-            exit 1
-          fi
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          DOCTL_VERSION: ${{ inputs.doctl_version }}
+          DEPLOY_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
+          REQUIRE_IMAGE_DIGESTS: ${{ inputs.require_image_digests }}
+          HEALTHCHECK_URL: ${{ inputs.healthcheck_url }}
+          HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
+          HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
+          HEALTHCHECK_TIMEOUT_SECONDS: ${{ inputs.healthcheck_timeout_seconds }}
+        run: ruby shared/scripts/app_platform.rb validate app
 
   deploy:
     needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     environment: ${{ inputs.environment }}
     concurrency:
       group: do-app-${{ github.repository }}-${{ inputs.app_id }}
       cancel-in-progress: false
+    outputs:
+      deployment_id: ${{ steps.verify.outputs.deployment_id }}
+      app_url: ${{ steps.verify.outputs.app_url }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out caller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: app
+          persist-credentials: false
+      - name: Check out this workflow's exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: shared
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: '3.3'
+      - name: Revalidate after environment approval
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          DOCTL_VERSION: ${{ inputs.doctl_version }}
+          DEPLOY_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
+          REQUIRE_IMAGE_DIGESTS: ${{ inputs.require_image_digests }}
+          HEALTHCHECK_URL: ${{ inputs.healthcheck_url }}
+          HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
+          HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
+          HEALTHCHECK_TIMEOUT_SECONDS: ${{ inputs.healthcheck_timeout_seconds }}
+        run: ruby shared/scripts/app_platform.rb validate app
+      - name: Confirm branch still points to caller commit
+        if: inputs.source_revision_policy == 'exact'
+        working-directory: app
+        env:
+          DEPLOY_REF: ${{ inputs.deploy_ref }}
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$DEPLOY_REF" == refs/heads/* ]]; then
+            askpass="$(mktemp)"
+            trap 'rm -f "$askpass"' EXIT
+            cat > "$askpass" <<'ASKPASS'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$GH_READ_TOKEN" ;;
+          esac
+          ASKPASS
+            chmod 700 "$askpass"
+            remote_sha="$(GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin "$DEPLOY_REF" | cut -f1)"
+            if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::Branch moved since this run started; deploy its current head"
+              exit 1
+            fi
+          fi
       - name: Install doctl
-        uses: digitalocean/action-doctl@v2.5.2
+        uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
         with:
           token: ${{ secrets.digitalocean_token }}
-          version: 1.180.0
-      - name: Validate and deploy app
+          version: ${{ inputs.doctl_version }}
+      - name: Validate with DigitalOcean and inspect current app
+        working-directory: app
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          BEFORE_JSON: ${{ runner.temp }}/do-app-before.json
+        run: |
+          set -euo pipefail
+          doctl apps spec validate "$APP_SPEC_PATH"
+          doctl apps get "$APP_ID" -o json > "$BEFORE_JSON"
+          ruby ../shared/scripts/app_platform.rb preflight . "$BEFORE_JSON"
+      - name: Update app and wait for deployment
+        working-directory: app
         env:
           APP_ID: ${{ inputs.app_id }}
           APP_SPEC_PATH: ${{ inputs.app_spec_path }}
         run: |
           set -euo pipefail
-          doctl apps spec validate "$APP_SPEC_PATH"
           doctl apps update "$APP_ID" --spec "$APP_SPEC_PATH" --update-sources --wait
+      - name: Verify active deployment
+        id: verify
+        working-directory: app
+        env:
+          APP_ID: ${{ inputs.app_id }}
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          SOURCE_REVISION_POLICY: ${{ inputs.source_revision_policy }}
+          REQUIRE_IMAGE_DIGESTS: ${{ inputs.require_image_digests }}
+          BEFORE_JSON: ${{ runner.temp }}/do-app-before.json
+          AFTER_JSON: ${{ runner.temp }}/do-app-after.json
+        run: |
+          set -euo pipefail
+          doctl apps get "$APP_ID" -o json > "$AFTER_JSON"
+          ruby ../shared/scripts/app_platform.rb verify . "$BEFORE_JSON" "$AFTER_JSON"
+      - name: Check public HTTPS endpoint
+        if: inputs.healthcheck_url != ''
+        env:
+          HEALTHCHECK_URL: ${{ inputs.healthcheck_url }}
+          HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
+          HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
+          HEALTHCHECK_TIMEOUT_SECONDS: ${{ inputs.healthcheck_timeout_seconds }}
+        run: ruby shared/scripts/app_platform.rb healthcheck
+      - name: Show app console link after failure
+        if: failure()
+        env:
+          APP_ID: ${{ inputs.app_id }}
+        run: echo "::error::Inspect the app at https://cloud.digitalocean.com/apps/$APP_ID"
