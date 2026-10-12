@@ -117,11 +117,14 @@ module AppPlatform
         assert(%w[github image].include?(source),
                "#{component_name} uses #{source}; set source_revision_policy: off if intentional")
       end
+      if %w[github gitlab bitbucket].include?(source)
+        provider = entry[source]
+        assert(provider.is_a?(Hash), "#{component_name} #{source} source must be a mapping")
+        assert(provider['deploy_on_push'] == false,
+               "#{component_name} must set #{source}.deploy_on_push: false")
+      end
       if source == 'github'
         github = entry['github']
-        assert(github.is_a?(Hash), "#{component_name} GitHub source must be a mapping")
-        assert(github['deploy_on_push'] == false,
-               "#{component_name} must set github.deploy_on_push: false")
         if policy != 'off'
           assert(ref.start_with?('refs/heads/'), 'GitHub source needs a branch deploy_ref')
           assert(github['repo'].to_s.casecmp?(repository),
@@ -138,6 +141,11 @@ module AppPlatform
       if source == 'image'
         image = entry['image']
         assert(image.is_a?(Hash), "#{component_name} image source must be a mapping")
+        automatic = image['deploy_on_push']
+        if automatic
+          assert(automatic.is_a?(Hash) && automatic['enabled'] == false,
+                 "#{component_name} must disable image.deploy_on_push.enabled")
+        end
         credentials = image['registry_credentials']
         if credentials
           assert(credentials.is_a?(String) && (credentials.match?(ENCRYPTED) || credentials.match?(REFERENCE)),
@@ -156,7 +164,7 @@ module AppPlatform
     assert(envs.is_a?(Array), "#{label} must be a list")
     envs.each do |env|
       assert(env.is_a?(Hash), "#{label} entries must be mappings")
-      next unless env['type'] == 'SECRET'
+      next unless env['type'].to_s.upcase == 'SECRET'
 
       value = env['value']
       assert(value.is_a?(String) && (value.match?(ENCRYPTED) || value.match?(REFERENCE)),
