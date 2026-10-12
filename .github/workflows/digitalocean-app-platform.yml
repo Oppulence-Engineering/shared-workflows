@@ -276,7 +276,7 @@ jobs:
           tags: ${{ steps.image.outputs.tag }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ inputs.image_repository }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image_repository }}
+          cache-to: type=gha,mode=max,ignore-error=true,scope=${{ inputs.image_repository }}
       - name: Verify public GitHub image can be pulled anonymously
         if: inputs.build_image && inputs.image_registry_type == 'GHCR'
         env:
