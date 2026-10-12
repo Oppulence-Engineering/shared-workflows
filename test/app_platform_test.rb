@@ -22,6 +22,12 @@ class AppPlatformTest < Minitest::Test
       'DEPLOY_TIMEOUT_MINUTES' => '60',
       'SOURCE_REVISION_POLICY' => 'exact',
       'REQUIRE_IMAGE_DIGESTS' => 'true',
+      'BUILD_IMAGE' => 'false',
+      'IMAGE_REGISTRY_TYPE' => 'GHCR',
+      'IMAGE_REGISTRY' => 'oppulence-engineering',
+      'IMAGE_REPOSITORY' => 'demo',
+      'DOCKERFILE_PATH' => 'Dockerfile',
+      'BUILD_CONTEXT' => '.',
       'GITHUB_REPOSITORY' => 'Oppulence-Engineering/demo',
       'GITHUB_SHA' => SHA,
       'HEALTHCHECK_URL' => '',
@@ -57,10 +63,23 @@ class AppPlatformTest < Minitest::Test
 
   def validate
     policy = AppPlatform.validate_options
+    AppPlatform.validate_build_paths(@dir)
     AppPlatform.validate_spec(AppPlatform.spec(@dir), policy: policy,
                               require_digests: AppPlatform.boolean('REQUIRE_IMAGE_DIGESTS'),
                               repository: ENV.fetch('GITHUB_REPOSITORY'),
-                              ref: ENV.fetch('DEPLOY_REF'))
+                              ref: ENV.fetch('DEPLOY_REF'),
+                              build_image: AppPlatform.boolean('BUILD_IMAGE'))
+  end
+
+  def set_image_build
+    ENV['BUILD_IMAGE'] = 'true'
+    File.write(File.join(@dir, 'Dockerfile'), 'FROM scratch')
+    @spec['services'][0].delete('github')
+    @spec['services'][0]['image'] = {
+      'registry_type' => 'GHCR', 'registry' => 'oppulence-engineering',
+      'repository' => 'demo', 'tag' => 'ci-placeholder'
+    }
+    write_spec
   end
 
   def app(deployment_id, sha: SHA, phase: 'ACTIVE')
@@ -127,6 +146,38 @@ class AppPlatformTest < Minitest::Test
     assert_raises(AppPlatform::Error) { validate }
     ENV['REQUIRE_IMAGE_DIGESTS'] = 'false'
     validate
+  end
+
+  def test_renders_all_components_to_one_immutable_image
+    set_image_build
+    @spec['workers'] = [{ 'name' => 'worker', 'image' => @spec['services'][0]['image'].dup }]
+    write_spec
+    validate
+    ENV['IMAGE_DIGEST'] = "sha256:#{'b' * 64}"
+    AppPlatform.render_image(@dir)
+    rendered = AppPlatform.spec(@dir)
+    assert_equal 2, AppPlatform.components(rendered).length
+    AppPlatform.components(rendered).each do |_kind, entry|
+      assert_equal ENV.fetch('IMAGE_DIGEST'), entry.dig('image', 'digest')
+      refute entry['image'].key?('tag')
+    end
+    ENV['BUILD_IMAGE'] = 'false'
+    validate
+  end
+
+  def test_rejects_unrelated_image_or_missing_build_file
+    set_image_build
+    @spec['services'][0]['image']['repository'] = 'unrelated'
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
+    @spec['services'][0]['image']['repository'] = 'demo'
+    write_spec
+    ENV['DOCKERFILE_PATH'] = '../Dockerfile'
+    assert_raises(AppPlatform::Error) { validate }
+    ENV['DOCKERFILE_PATH'] = 'Dockerfile'
+    @spec['workers'] = [{ 'name' => 'other', 'github' => @spec['services'][0]['github'] || {} }]
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
   end
 
   def test_verifies_image_digest_and_rejects_registry_credentials

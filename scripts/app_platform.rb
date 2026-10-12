@@ -13,6 +13,7 @@ module AppPlatform
   SOURCE_KEYS = %w[github gitlab bitbucket git image].freeze
   UUID = /\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i
   DIGEST = /\Asha256:[0-9a-f]{64}\z/i
+  IMAGE_NAME = /\A[a-z0-9]+(?:[._-][a-z0-9]+)*\z/
   ENCRYPTED = /\AEV\[[^\]\r\n]+\]\z/
   REFERENCE = /\A\$\{(?:[A-Za-z_][A-Za-z0-9_]*|[A-Za-z0-9_-]+\.[A-Za-z_][A-Za-z0-9_]*)\}\z/
 
@@ -80,12 +81,45 @@ module AppPlatform
     policy = option('SOURCE_REVISION_POLICY')
     assert(%w[exact branch off].include?(policy), 'SOURCE_REVISION_POLICY must be exact, branch, or off')
     boolean('REQUIRE_IMAGE_DIGESTS')
+    if boolean('BUILD_IMAGE')
+      assert(boolean('REQUIRE_IMAGE_DIGESTS'), 'BUILD_IMAGE requires REQUIRE_IMAGE_DIGESTS=true')
+      assert(%w[GHCR DOCR].include?(option('IMAGE_REGISTRY_TYPE')),
+             'IMAGE_REGISTRY_TYPE must be GHCR or DOCR')
+      assert(option('IMAGE_REGISTRY').match?(IMAGE_NAME), 'IMAGE_REGISTRY must be a lowercase registry name')
+      assert(option('IMAGE_REPOSITORY').match?(IMAGE_NAME), 'IMAGE_REPOSITORY must be a lowercase image name')
+      if option('IMAGE_REGISTRY_TYPE') == 'GHCR'
+        owner = option('GITHUB_REPOSITORY').split('/').first
+        assert(option('IMAGE_REGISTRY').casecmp?(owner),
+               'GHCR image registry must match the caller repository owner')
+      end
+      assert(!option('DOCKERFILE_PATH').empty?, 'DOCKERFILE_PATH is required when BUILD_IMAGE=true')
+      assert(!option('BUILD_CONTEXT').empty?, 'BUILD_CONTEXT is required when BUILD_IMAGE=true')
+    end
     integer('HEALTHCHECK_ATTEMPTS', 1..100)
     integer('HEALTHCHECK_INTERVAL_SECONDS', 0..300)
     integer('HEALTHCHECK_TIMEOUT_SECONDS', 1..120)
     url = option('HEALTHCHECK_URL')
     validate_health_url(url) unless url.empty?
     policy
+  end
+
+  def checked_path(root, relative, file:)
+    assert(!relative.empty? && !relative.start_with?('/') && !relative.split('/').include?('..'),
+           'Build path must stay inside the caller repository')
+    base = File.realpath(root)
+    path = File.realpath(File.join(base, relative))
+    assert(path.start_with?("#{base}/") || path == base, 'Build path resolves outside the caller repository')
+    assert(file ? File.file?(path) : File.directory?(path), 'Build path has the wrong type')
+    path
+  rescue Errno::ENOENT
+    raise Error, "Build path not found: #{relative}"
+  end
+
+  def validate_build_paths(root)
+    return unless boolean('BUILD_IMAGE')
+
+    checked_path(root, option('DOCKERFILE_PATH'), file: true)
+    checked_path(root, option('BUILD_CONTEXT'), file: false)
   end
 
   def validate_health_url(value)
@@ -97,7 +131,7 @@ module AppPlatform
     raise Error, 'HEALTHCHECK_URL must be a valid HTTPS URL'
   end
 
-  def validate_spec(data, policy:, require_digests:, repository:, ref:)
+  def validate_spec(data, policy:, require_digests:, repository:, ref:, build_image: false)
     name = data['name']
     assert(name.is_a?(String) && !name.strip.empty?, 'App spec must have a name')
     entries = components(data)
@@ -132,7 +166,7 @@ module AppPlatform
           assert(github['branch'] == expected_branch,
                  "#{component_name} GitHub branch must match deploy_ref")
         end
-      elsif source == 'image' && require_digests
+      elsif source == 'image' && require_digests && !build_image
         image = entry['image']
         assert(image.is_a?(Hash) && image['digest'].to_s.match?(DIGEST),
                "#{component_name} must use image.digest: sha256:<64 hex characters>")
@@ -141,6 +175,14 @@ module AppPlatform
       if source == 'image'
         image = entry['image']
         assert(image.is_a?(Hash), "#{component_name} image source must be a mapping")
+        if build_image
+          assert(image['registry_type'] == option('IMAGE_REGISTRY_TYPE') &&
+                 image['registry'].to_s.casecmp?(option('IMAGE_REGISTRY')) &&
+                 image['repository'] == option('IMAGE_REPOSITORY'),
+                 "#{component_name} image must match the configured build target")
+          assert(image['tag'] == 'ci-placeholder' && !image.key?('digest'),
+                 "#{component_name} must use tag: ci-placeholder in the committed spec")
+        end
         automatic = image['deploy_on_push']
         if automatic
           assert(automatic.is_a?(Hash) && automatic['enabled'] == false,
@@ -155,7 +197,29 @@ module AppPlatform
       validate_secrets(entry['envs'], "#{component_name} envs")
     end
     validate_secrets(data['envs'], 'app envs')
+    if build_image
+      assert(entries.all? { |_kind, entry| entry.key?('image') },
+             'BUILD_IMAGE requires every deployable component to use the built image')
+    end
     name
+  end
+
+  def render_image(root)
+    digest = option('IMAGE_DIGEST')
+    assert(digest.match?(DIGEST), 'IMAGE_DIGEST must be sha256:<64 hex characters>')
+    data = spec(root)
+    validate_spec(data, policy: option('SOURCE_REVISION_POLICY'), require_digests: true,
+                  repository: option('GITHUB_REPOSITORY'), ref: option('DEPLOY_REF'), build_image: true)
+    components(data).each do |_kind, entry|
+      image = entry['image']
+      image.delete('tag')
+      image['digest'] = digest
+    end
+    validate_spec(data, policy: option('SOURCE_REVISION_POLICY'), require_digests: true,
+                  repository: option('GITHUB_REPOSITORY'), ref: option('DEPLOY_REF'))
+    checked_path(root, option('APP_SPEC_PATH'), file: true)
+    File.write(File.join(root, option('APP_SPEC_PATH')), JSON.pretty_generate(data) + "\n")
+    puts "Pinned #{components(data).length} components to #{digest}"
   end
 
   def validate_secrets(envs, label)
@@ -303,12 +367,16 @@ if $PROGRAM_NAME == __FILE__
     when 'validate'
       policy = AppPlatform.validate_options
       root = ARGV.fetch(0)
+      AppPlatform.validate_build_paths(root)
       data = AppPlatform.spec(root)
       AppPlatform.validate_spec(data, policy: policy,
                                 require_digests: AppPlatform.boolean('REQUIRE_IMAGE_DIGESTS'),
                                 repository: AppPlatform.option('GITHUB_REPOSITORY'),
-                                ref: AppPlatform.option('DEPLOY_REF'))
+                                ref: AppPlatform.option('DEPLOY_REF'),
+                                build_image: AppPlatform.boolean('BUILD_IMAGE'))
       puts "Validated App Platform spec for #{data['name']}"
+    when 'render-image'
+      AppPlatform.render_image(ARGV.fetch(0))
     when 'preflight'
       AppPlatform.preflight(ARGV.fetch(0), ARGV.fetch(1))
     when 'verify'
@@ -316,7 +384,7 @@ if $PROGRAM_NAME == __FILE__
     when 'healthcheck'
       AppPlatform.healthcheck
     else
-      raise AppPlatform::Error, 'Usage: app_platform.rb validate|preflight|verify|healthcheck'
+      raise AppPlatform::Error, 'Usage: app_platform.rb validate|render-image|preflight|verify|healthcheck'
     end
   rescue AppPlatform::Error, IndexError => e
     warn "::error::#{e.message}"
