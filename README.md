@@ -38,8 +38,13 @@ The deployment job serializes updates to the same app ID within a caller reposit
 | `healthcheck_attempts` | `12` | 1–100 attempts. |
 | `healthcheck_interval_seconds` | `5` | 0–300 seconds between attempts. |
 | `healthcheck_timeout_seconds` | `10` | 1–120 seconds per request. |
+| `infisical_identity_id` | Empty | OIDC machine identity UUID. Set with `infisical_project_id` to fetch deployment secrets. |
+| `infisical_project_id` | Empty | Project UUID containing the app's deployment secrets. |
+| `infisical_environment` | `prod` | Environment slug. |
+| `infisical_secret_path` | `/` | Folder to fetch, without subfolders or imported secrets. Use an app-specific folder when sharing a project. |
+| `infisical_domain` | `https://app.infisical.com` | HTTPS Infisical instance URL. |
 
-Secret: `digitalocean_token` is required. Pass it by name from the calling repository or organization. The token needs App Platform read and write access to the target app. Never use `secrets: inherit` for this call.
+Secret: `digitalocean_token` can come from the calling repository or organization. Alternatively, the configured Infisical folder can contain `DIGITALOCEAN_TOKEN`. The token needs App Platform read and write access to the target app. Never use `secrets: inherit` for this call.
 
 Outputs: `deployment_id` and `app_url` are available from the caller's deploy job. The job summary also links to the app.
 
@@ -89,6 +94,35 @@ jobs:
 `branch` accepts a changing branch head while still checking the repository and branch. `off` allows GitLab, Bitbucket, Git, and external GitHub sources. These modes cannot verify the deployed source revision against the caller commit. GitHub, GitLab, and Bitbucket sources require `deploy_on_push: false`; image sources must not enable `deploy_on_push`. This keeps deployments controlled by the workflow.
 
 The workflow rejects plaintext `SECRET` environment values and plaintext image registry credentials in the committed spec. Use DigitalOcean encrypted `EV[...]` values or variable references. Its DigitalOcean validation proposes the spec against the existing app ID so encrypted secret values are accepted. Keep all runtime secret values and credentials out of this public repository.
+
+### Fetch secrets from Infisical during deployment
+
+Create an Infisical machine identity with OIDC authentication and secret read access limited to the app's production folder. Bind its GitHub token subject to the caller repository and `production` environment (for example, `repo:your-organization/your-app:environment:production`). Set its issuer to `https://token.actions.githubusercontent.com` and use the audience configured in Infisical. Store only the identity and project UUIDs as GitHub variables. Grant the caller workflow `id-token: write`; the reusable workflow grants this only to its deploy job. GitHub's environment gate runs before Infisical authentication.
+
+In the caller's complete app spec, write `value: infisical://DATABASE_URL` under a `type: SECRET` environment entry. The name must match a secret in the selected Infisical folder. The deploy job replaces references only in its ephemeral checkout, requires every referenced secret to be nonempty, and writes the local spec with mode `0600`. It then sends values to DigitalOcean as encrypted App Platform environment variables. DigitalOcean stores a deployment snapshot; rotating a secret in Infisical requires another deployment. Do not put secret references in `type: GENERAL` entries or Docker build arguments. Restrict the machine identity to the deployment folder, because Infisical exports all secrets in that folder to the deploy job.
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  deploy:
+    uses: your-organization/shared-workflows/.github/workflows/digitalocean-app-platform.yml@<reviewed-40-character-sha>
+    with:
+      app_id: ${{ vars.DO_APP_ID }}
+      app_spec_path: .do/production.yaml
+      deploy_ref: refs/heads/main
+      environment: production
+      infisical_identity_id: ${{ vars.INFISICAL_IDENTITY_ID }}
+      infisical_project_id: ${{ vars.INFISICAL_PROJECT_ID }}
+      infisical_environment: prod
+      infisical_secret_path: /your-app
+    # Optional if the folder contains DIGITALOCEAN_TOKEN:
+    secrets:
+      digitalocean_token: ${{ secrets.DIGITALOCEAN_APP_PLATFORM_TOKEN }}
+```
 
 ### Provision each app once
 

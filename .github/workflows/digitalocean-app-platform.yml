@@ -87,10 +87,30 @@ on:
         description: Per-request timeout from 1 to 120 seconds
         type: number
         default: 10
+      infisical_identity_id:
+        description: OIDC machine identity UUID; leave empty to disable Infisical
+        type: string
+        default: ''
+      infisical_project_id:
+        description: Infisical project UUID containing this app's secrets
+        type: string
+        default: ''
+      infisical_environment:
+        description: Infisical environment slug
+        type: string
+        default: prod
+      infisical_secret_path:
+        description: Infisical folder containing only this app's deployment secrets
+        type: string
+        default: /
+      infisical_domain:
+        description: Infisical instance URL
+        type: string
+        default: https://app.infisical.com
     secrets:
       digitalocean_token:
-        description: DigitalOcean token with App Platform read/write access
-        required: true
+        description: DigitalOcean token; optional when Infisical provides DIGITALOCEAN_TOKEN
+        required: false
     outputs:
       deployment_id:
         description: Verified active deployment ID
@@ -150,6 +170,11 @@ jobs:
           HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
           HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
           HEALTHCHECK_TIMEOUT_SECONDS: ${{ inputs.healthcheck_timeout_seconds }}
+          INFISICAL_IDENTITY_ID: ${{ inputs.infisical_identity_id }}
+          INFISICAL_PROJECT_ID: ${{ inputs.infisical_project_id }}
+          INFISICAL_ENVIRONMENT: ${{ inputs.infisical_environment }}
+          INFISICAL_SECRET_PATH: ${{ inputs.infisical_secret_path }}
+          INFISICAL_DOMAIN: ${{ inputs.infisical_domain }}
         run: ruby shared/scripts/app_platform.rb validate app
 
   deploy:
@@ -158,6 +183,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     timeout-minutes: ${{ inputs.timeout_minutes }}
     environment: ${{ inputs.environment }}
     concurrency:
@@ -202,6 +228,11 @@ jobs:
           HEALTHCHECK_ATTEMPTS: ${{ inputs.healthcheck_attempts }}
           HEALTHCHECK_INTERVAL_SECONDS: ${{ inputs.healthcheck_interval_seconds }}
           HEALTHCHECK_TIMEOUT_SECONDS: ${{ inputs.healthcheck_timeout_seconds }}
+          INFISICAL_IDENTITY_ID: ${{ inputs.infisical_identity_id }}
+          INFISICAL_PROJECT_ID: ${{ inputs.infisical_project_id }}
+          INFISICAL_ENVIRONMENT: ${{ inputs.infisical_environment }}
+          INFISICAL_SECRET_PATH: ${{ inputs.infisical_secret_path }}
+          INFISICAL_DOMAIN: ${{ inputs.infisical_domain }}
         run: ruby shared/scripts/app_platform.rb validate app
       - name: Confirm branch still points to caller commit
         if: inputs.source_revision_policy == 'exact'
@@ -228,10 +259,30 @@ jobs:
               exit 1
             fi
           fi
+      - name: Fetch scoped secrets from Infisical
+        if: inputs.infisical_identity_id != ''
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: ${{ inputs.infisical_identity_id }}
+          domain: ${{ inputs.infisical_domain }}
+          project-id: ${{ inputs.infisical_project_id }}
+          env-slug: ${{ inputs.infisical_environment }}
+          secret-path: ${{ inputs.infisical_secret_path }}
+          include-imports: 'false'
+          recursive: 'false'
+      - name: Require a DigitalOcean token
+        env:
+          DO_TOKEN: ${{ secrets.digitalocean_token || env.DIGITALOCEAN_TOKEN }}
+        run: |
+          if [[ -z "$DO_TOKEN" ]]; then
+            echo '::error::Provide digitalocean_token or Infisical DIGITALOCEAN_TOKEN'
+            exit 1
+          fi
       - name: Install doctl
         uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
         with:
-          token: ${{ secrets.digitalocean_token }}
+          token: ${{ secrets.digitalocean_token || env.DIGITALOCEAN_TOKEN }}
           version: ${{ inputs.doctl_version }}
       - name: Log in to GitHub Container Registry
         if: inputs.build_image && inputs.image_registry_type == 'GHCR'
@@ -297,7 +348,15 @@ jobs:
           IMAGE_REGISTRY: ${{ inputs.image_registry }}
           IMAGE_REPOSITORY: ${{ inputs.image_repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          INFISICAL_IDENTITY_ID: ${{ inputs.infisical_identity_id }}
         run: ruby ../shared/scripts/app_platform.rb render-image .
+      - name: Resolve Infisical secret references
+        if: inputs.infisical_identity_id != ''
+        working-directory: app
+        env:
+          APP_SPEC_PATH: ${{ inputs.app_spec_path }}
+          INFISICAL_IDENTITY_ID: ${{ inputs.infisical_identity_id }}
+        run: ruby ../shared/scripts/app_platform.rb render-secrets .
       - name: Validate with DigitalOcean and inspect current app
         working-directory: app
         env:
