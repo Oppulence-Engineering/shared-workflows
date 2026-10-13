@@ -180,6 +180,12 @@ class AppPlatformTest < Minitest::Test
     rendered = AppPlatform.spec(@dir)
     assert_equal ENV.fetch('IMAGE_DIGEST'), rendered['services'][0].dig('image', 'digest')
     assert_equal fixed_digest, rendered['services'][1].dig('image', 'digest')
+    @spec = rendered
+    @spec['services'][1]['image'].delete('repository')
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
+    @spec['services'][1]['image']['repository'] = 'supabase/storage-api'
+    write_spec
     ENV['BUILD_IMAGE'] = 'false'
     validate
   end

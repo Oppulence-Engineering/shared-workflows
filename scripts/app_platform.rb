@@ -182,7 +182,8 @@ module AppPlatform
                    image['repository'] == option('IMAGE_REPOSITORY') && !image.key?('digest'),
                    "#{component_name} placeholder must match the configured build target")
           else
-            assert(image['digest'].to_s.match?(DIGEST) && !image.key?('tag'),
+            assert(image['repository'].is_a?(String) && !image['repository'].empty? &&
+                   image['digest'].to_s.match?(DIGEST) && !image.key?('tag'),
                    "#{component_name} must use an immutable digest when it is not built here")
           end
         end
