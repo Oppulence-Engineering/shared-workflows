@@ -40,7 +40,7 @@ on:
         type: boolean
         default: true
       build_image:
-        description: Build and push one image in GitHub, then pin every component to its digest
+        description: Build and push one image in GitHub, then pin matching placeholders; other images must already have digests
         type: boolean
         default: false
       image_registry_type:

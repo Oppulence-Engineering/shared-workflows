@@ -26,10 +26,10 @@ The deployment job serializes updates to the same app ID within a caller reposit
 | `timeout_minutes` | `60` | Deploy job timeout, 5–360 minutes. |
 | `source_revision_policy` | `exact` | `exact`: require GitHub source from caller repo/branch and verify every deployed source commit equals `github.sha`. `branch`: require caller repo/branch but skip commit verification. `off`: allow other source providers and branches. |
 | `require_image_digests` | `true` | Require image components to use an immutable `sha256:` digest and verify that the active deployment uses it. Set `false` to permit tags. |
-| `build_image` | `false` | Build one image in GitHub Actions and pin every service, worker, and job to its immutable digest. Requires `require_image_digests: true`. |
+| `build_image` | `false` | Build one image in GitHub Actions and pin matching `ci-placeholder` components to its immutable digest. Other image components must already use immutable digests. Requires `require_image_digests: true`. |
 | `image_registry_type` | `GHCR` | `GHCR` or `DOCR` for the built image. |
 | `image_registry` | Empty | GHCR organization (must match caller owner) or DigitalOcean registry name. |
-| `image_repository` | Empty | Image package name. Every component in the spec must reference this same package. |
+| `image_repository` | Empty | Image package name for components built by this call. |
 | `dockerfile_path` | `Dockerfile` | Dockerfile inside the caller repository. |
 | `build_context` | `.` | Build context inside the caller repository. |
 | `build_target` | Empty | Optional Dockerfile stage. |
@@ -59,7 +59,7 @@ image:
   tag: ci-placeholder
 ```
 
-Every deployable component must use that same image package. The placeholder is never submitted to DigitalOcean; the workflow replaces it with the digest emitted by Docker Buildx. For GHCR, the package must allow anonymous pulls because this workflow does not place registry credentials in the app spec. The workflow logs out and checks anonymous pull before updating the app. Link the image to the public source repository to inherit package access, or mark the package public in GitHub package settings. GitHub says a public package cannot later be made private. For DOCR, create the registry beforehand and let the DigitalOcean token authenticate the push. App Platform only runs Linux AMD64 images, so the build platform is fixed to `linux/amd64`.
+At least one component must use the configured image package and `ci-placeholder`. Other image components may reference separate packages if they already use an immutable `digest: sha256:...` and no `tag`. The placeholder is never submitted to DigitalOcean; the workflow replaces it with the digest emitted by Docker Buildx and preserves the fixed digests. For GHCR, the package must allow anonymous pulls because this workflow does not place registry credentials in the app spec. The workflow logs out and checks anonymous pull before updating the app. Link the image to the public source repository to inherit package access, or mark the package public in GitHub package settings. GitHub says a public package cannot later be made private. For DOCR, create the registry beforehand and let the DigitalOcean token authenticate the push. App Platform only runs Linux AMD64 images, so the build platform is fixed to `linux/amd64`.
 
 The caller's deploy job needs these additional inputs:
 

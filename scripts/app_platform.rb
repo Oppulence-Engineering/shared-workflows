@@ -176,12 +176,15 @@ module AppPlatform
         image = entry['image']
         assert(image.is_a?(Hash), "#{component_name} image source must be a mapping")
         if build_image
-          assert(image['registry_type'] == option('IMAGE_REGISTRY_TYPE') &&
-                 image['registry'].to_s.casecmp?(option('IMAGE_REGISTRY')) &&
-                 image['repository'] == option('IMAGE_REPOSITORY'),
-                 "#{component_name} image must match the configured build target")
-          assert(image['tag'] == 'ci-placeholder' && !image.key?('digest'),
-                 "#{component_name} must use tag: ci-placeholder in the committed spec")
+          if image['tag'] == 'ci-placeholder'
+            assert(image['registry_type'] == option('IMAGE_REGISTRY_TYPE') &&
+                   image['registry'].to_s.casecmp?(option('IMAGE_REGISTRY')) &&
+                   image['repository'] == option('IMAGE_REPOSITORY') && !image.key?('digest'),
+                   "#{component_name} placeholder must match the configured build target")
+          else
+            assert(image['digest'].to_s.match?(DIGEST) && !image.key?('tag'),
+                   "#{component_name} must use an immutable digest when it is not built here")
+          end
         end
         automatic = image['deploy_on_push']
         if automatic
@@ -199,7 +202,9 @@ module AppPlatform
     validate_secrets(data['envs'], 'app envs')
     if build_image
       assert(entries.all? { |_kind, entry| entry.key?('image') },
-             'BUILD_IMAGE requires every deployable component to use the built image')
+             'BUILD_IMAGE requires every deployable component to use an image')
+      assert(entries.any? { |_kind, entry| entry.dig('image', 'tag') == 'ci-placeholder' },
+             'BUILD_IMAGE requires at least one ci-placeholder image')
     end
     name
   end
@@ -212,6 +217,8 @@ module AppPlatform
                   repository: option('GITHUB_REPOSITORY'), ref: option('DEPLOY_REF'), build_image: true)
     components(data).each do |_kind, entry|
       image = entry['image']
+      next unless image['tag'] == 'ci-placeholder'
+
       image.delete('tag')
       image['digest'] = digest
     end

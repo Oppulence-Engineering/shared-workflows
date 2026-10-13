@@ -165,12 +165,35 @@ class AppPlatformTest < Minitest::Test
     validate
   end
 
+  def test_preserves_prebuilt_component_digest_while_rendering_built_image
+    set_image_build
+    fixed_digest = "sha256:#{'c' * 64}"
+    @spec['services'] << {
+      'name' => 'storage',
+      'image' => { 'registry_type' => 'DOCKER_HUB', 'repository' => 'supabase/storage-api',
+                   'digest' => fixed_digest }
+    }
+    write_spec
+    validate
+    ENV['IMAGE_DIGEST'] = "sha256:#{'b' * 64}"
+    AppPlatform.render_image(@dir)
+    rendered = AppPlatform.spec(@dir)
+    assert_equal ENV.fetch('IMAGE_DIGEST'), rendered['services'][0].dig('image', 'digest')
+    assert_equal fixed_digest, rendered['services'][1].dig('image', 'digest')
+    ENV['BUILD_IMAGE'] = 'false'
+    validate
+  end
+
   def test_rejects_unrelated_image_or_missing_build_file
     set_image_build
     @spec['services'][0]['image']['repository'] = 'unrelated'
     write_spec
     assert_raises(AppPlatform::Error) { validate }
+    @spec['services'][0]['image']['tag'] = 'latest'
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
     @spec['services'][0]['image']['repository'] = 'demo'
+    @spec['services'][0]['image']['tag'] = 'ci-placeholder'
     write_spec
     ENV['DOCKERFILE_PATH'] = '../Dockerfile'
     assert_raises(AppPlatform::Error) { validate }
