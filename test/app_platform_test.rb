@@ -34,6 +34,11 @@ class AppPlatformTest < Minitest::Test
       'HEALTHCHECK_ATTEMPTS' => '12',
       'HEALTHCHECK_INTERVAL_SECONDS' => '5',
       'HEALTHCHECK_TIMEOUT_SECONDS' => '10',
+      'INFISICAL_IDENTITY_ID' => '',
+      'INFISICAL_PROJECT_ID' => '',
+      'INFISICAL_ENVIRONMENT' => 'prod',
+      'INFISICAL_SECRET_PATH' => '/',
+      'INFISICAL_DOMAIN' => 'https://app.infisical.com',
       'GITHUB_OUTPUT' => File.join(@dir, 'output'),
       'GITHUB_STEP_SUMMARY' => File.join(@dir, 'summary')
     )
@@ -129,6 +134,41 @@ class AppPlatformTest < Minitest::Test
     @spec['services'][0]['envs'][0]['type'] = 'secret'
     write_spec
     assert_raises(AppPlatform::Error) { validate }
+  end
+
+  def test_infisical_references_require_scoped_oidc_configuration
+    @spec['services'][0]['envs'][0]['value'] = 'infisical://DATABASE_URL'
+    write_spec
+    assert_raises(AppPlatform::Error) { validate }
+    ENV['INFISICAL_IDENTITY_ID'] = APP_ID
+    assert_raises(AppPlatform::Error) { AppPlatform.validate_options }
+    ENV['INFISICAL_PROJECT_ID'] = APP_ID
+    ENV['INFISICAL_SECRET_PATH'] = '/screenshot-studio'
+    validate
+    ENV['INFISICAL_SECRET_PATH'] = '/../other'
+    assert_raises(AppPlatform::Error) { AppPlatform.validate_options }
+  end
+
+  def test_resolves_infisical_secret_without_echoing_it
+    ENV['INFISICAL_IDENTITY_ID'] = APP_ID
+    ENV['INFISICAL_PROJECT_ID'] = APP_ID
+    ENV['DATABASE_URL'] = 'postgresql://test:private@example.test/db'
+    @spec['services'][0]['envs'][0]['value'] = 'infisical://DATABASE_URL'
+    write_spec
+    validate
+    AppPlatform.render_secrets(@dir)
+    assert_equal ENV.fetch('DATABASE_URL'), AppPlatform.spec(@dir)['services'][0]['envs'][0]['value']
+    assert_equal 0o600, File.stat(File.join(@dir, 'app.yaml')).mode & 0o777
+  end
+
+  def test_fails_closed_when_infisical_secret_is_missing
+    ENV['INFISICAL_IDENTITY_ID'] = APP_ID
+    ENV['INFISICAL_PROJECT_ID'] = APP_ID
+    ENV.delete('MISSING_DEPLOY_SECRET')
+    @spec['services'][0]['envs'][0]['value'] = 'infisical://MISSING_DEPLOY_SECRET'
+    write_spec
+    assert_raises(AppPlatform::Error) { AppPlatform.render_secrets(@dir) }
+    assert_equal 'infisical://MISSING_DEPLOY_SECRET', AppPlatform.spec(@dir)['services'][0]['envs'][0]['value']
   end
 
   def test_accepts_component_bindable_secret_and_valid_git_ref

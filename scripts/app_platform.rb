@@ -16,6 +16,7 @@ module AppPlatform
   IMAGE_NAME = /\A[a-z0-9]+(?:[._-][a-z0-9]+)*\z/
   ENCRYPTED = /\AEV\[[^\]\r\n]+\]\z/
   REFERENCE = /\A\$\{(?:[A-Za-z_][A-Za-z0-9_]*|[A-Za-z0-9_-]+\.[A-Za-z_][A-Za-z0-9_]*)\}\z/
+  INFISICAL_REFERENCE = /\Ainfisical:\/\/([A-Za-z_][A-Za-z0-9_]*)\z/
 
   module_function
 
@@ -100,6 +101,19 @@ module AppPlatform
     integer('HEALTHCHECK_TIMEOUT_SECONDS', 1..120)
     url = option('HEALTHCHECK_URL')
     validate_health_url(url) unless url.empty?
+    identity = ENV.fetch('INFISICAL_IDENTITY_ID', '')
+    project = ENV.fetch('INFISICAL_PROJECT_ID', '')
+    assert(identity.empty? == project.empty?,
+           'INFISICAL_IDENTITY_ID and INFISICAL_PROJECT_ID must be set together')
+    unless identity.empty?
+      assert(identity.match?(UUID) && project.match?(UUID), 'Infisical identity and project IDs must be UUIDs')
+      assert(ENV.fetch('INFISICAL_ENVIRONMENT', '').match?(/\A[a-z][a-z0-9-]*\z/),
+             'INFISICAL_ENVIRONMENT must be an environment slug')
+      path = ENV.fetch('INFISICAL_SECRET_PATH', '')
+      assert(path.match?(%r{\A/(?:[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)?\z}) &&
+             !path.split('/').include?('..'), 'INFISICAL_SECRET_PATH must be an absolute folder path')
+      validate_health_url(ENV.fetch('INFISICAL_DOMAIN', ''))
+    end
     policy
   end
 
@@ -239,9 +253,36 @@ module AppPlatform
       next unless env['type'].to_s.upcase == 'SECRET'
 
       value = env['value']
-      assert(value.is_a?(String) && (value.match?(ENCRYPTED) || value.match?(REFERENCE)),
+      allowed = value.is_a?(String) && (value.match?(ENCRYPTED) || value.match?(REFERENCE) ||
+                 (!ENV.fetch('INFISICAL_IDENTITY_ID', '').empty? && value.match?(INFISICAL_REFERENCE)))
+      assert(allowed,
              "#{label} contains a plaintext or missing SECRET value")
     end
+  end
+
+  def render_secrets(root)
+    assert(!ENV.fetch('INFISICAL_IDENTITY_ID', '').empty?, 'Infisical is not configured')
+    data = spec(root)
+    count = 0
+    collections = [data['envs']] + components(data).map { |_kind, entry| entry['envs'] }
+    collections.compact.each do |envs|
+      envs.each do |env|
+        next unless env['type'].to_s.upcase == 'SECRET'
+        match = INFISICAL_REFERENCE.match(env['value'].to_s)
+        next unless match
+
+        key = match[1]
+        value = ENV[key]
+        assert(value.is_a?(String) && !value.empty?, "Infisical secret #{key} is missing or empty")
+        env['value'] = value
+        count += 1
+      end
+    end
+    return if count.zero?
+    path = checked_path(root, option('APP_SPEC_PATH'), file: true)
+    File.write(path, JSON.pretty_generate(data) + "\n")
+    File.chmod(0o600, path)
+    puts "Resolved #{count} Infisical references in the local deployment spec"
   end
 
   def read_app(path)
@@ -385,6 +426,8 @@ if $PROGRAM_NAME == __FILE__
       puts "Validated App Platform spec for #{data['name']}"
     when 'render-image'
       AppPlatform.render_image(ARGV.fetch(0))
+    when 'render-secrets'
+      AppPlatform.render_secrets(ARGV.fetch(0))
     when 'preflight'
       AppPlatform.preflight(ARGV.fetch(0), ARGV.fetch(1))
     when 'verify'
@@ -392,7 +435,7 @@ if $PROGRAM_NAME == __FILE__
     when 'healthcheck'
       AppPlatform.healthcheck
     else
-      raise AppPlatform::Error, 'Usage: app_platform.rb validate|render-image|preflight|verify|healthcheck'
+      raise AppPlatform::Error, 'Usage: app_platform.rb validate|render-image|render-secrets|preflight|verify|healthcheck'
     end
   rescue AppPlatform::Error, IndexError => e
     warn "::error::#{e.message}"
